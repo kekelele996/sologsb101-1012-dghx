@@ -7,6 +7,7 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Badge, Button, Layout, Menu, Space, Tag, Typography, message } from 'antd';
 import {
   AppstoreOutlined,
+  CloudSyncOutlined,
   DashboardOutlined,
   ExperimentOutlined,
   GlobalOutlined,
@@ -30,6 +31,11 @@ import {
   selectReplaces,
   startCalibrationSubscription,
 } from '@/stores/calibrationSlice';
+import {
+  selectActiveSuspendedCount,
+  selectPendingReviewCount,
+  startMergeSubscription,
+} from '@/stores/mergeSlice';
 import { DB_NAME, DB_VERSION, initDatabase } from '@/utils/db';
 
 const { Header, Sider, Content, Footer } = Layout;
@@ -38,6 +44,7 @@ const { Header, Sider, Content, Footer } = Layout;
 function buildSelectedKey(pathname: string, currentArrayId: string | null): string {
   if (pathname.startsWith('/calibrations')) return ROUTES.calibrations;
   if (pathname.startsWith('/replacements')) return ROUTES.replacements;
+  if (pathname.startsWith('/merge')) return ROUTES.merge;
   if (pathname.startsWith('/geometry')) return ROUTES.geometry;
   if (pathname.startsWith('/stations/') && currentArrayId) return ROUTES.stations(currentArrayId);
   return ROUTES.arrays;
@@ -55,6 +62,8 @@ export default function App() {
   const calibrations = useAppSelector(selectCalibrations);
   const replaces = useAppSelector(selectReplaces);
   const currentArrayId = useAppSelector(selectCurrentArrayId);
+  const pendingReview = useAppSelector(selectPendingReviewCount);
+  const activeSuspended = useAppSelector(selectActiveSuspendedCount);
   const ready = useAppSelector((state) => state.array.ready);
 
   useEffect(() => {
@@ -67,6 +76,7 @@ export default function App() {
         startArraySubscription(dispatch);
         startInstrumentSubscription(dispatch);
         startCalibrationSubscription(dispatch);
+        startMergeSubscription(dispatch);
       } catch (error) {
         if (cancelled) return;
         messageApi.error(
@@ -118,6 +128,23 @@ export default function App() {
               },
               { key: ROUTES.calibrations, icon: <DashboardOutlined />, label: '标定记录台' },
               { key: ROUTES.replacements, icon: <SwapOutlined />, label: '合格评定与更换' },
+              {
+                key: ROUTES.merge,
+                icon: <CloudSyncOutlined />,
+                label: (
+                  <span>
+                    现场台账对账
+                    {(pendingReview > 0 || activeSuspended > 0) && (
+                      <Badge
+                        size="small"
+                        count={pendingReview + activeSuspended}
+                        color="#c0392b"
+                        style={{ marginInlineStart: 8 }}
+                      />
+                    )}
+                  </span>
+                ),
+              },
               { key: ROUTES.geometry, icon: <GlobalOutlined />, label: '台阵几何与备份' },
             ]}
           />
@@ -134,6 +161,9 @@ export default function App() {
               </span>
               <span>
                 <SwapOutlined /> 更换未闭环 {pendingReplaces}
+              </span>
+              <span>
+                <CloudSyncOutlined /> 待认 {pendingReview} · 挂起 {activeSuspended}
               </span>
             </Space>
           </div>

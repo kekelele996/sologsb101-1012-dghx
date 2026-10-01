@@ -12,6 +12,7 @@ const StationInstruments = lazy(() => import('@/pages/StationInstruments'));
 const CalibrationBoard = lazy(() => import('@/pages/CalibrationBoard'));
 const ReplaceBoard = lazy(() => import('@/pages/ReplaceBoard'));
 const GeometryView = lazy(() => import('@/pages/GeometryView'));
+const MergeBoard = lazy(() => import('@/pages/MergeBoard'));
 
 /** 懒加载页面占位 */
 function RouteFallback() {
@@ -35,6 +36,7 @@ export const ROUTES = {
   calibrations: '/calibrations',
   replacements: '/replacements',
   geometry: '/geometry',
+  merge: '/merge',
 } as const;
 
 export const appRoutes: RouteObject[] = [
@@ -47,6 +49,7 @@ export const appRoutes: RouteObject[] = [
       { path: 'stations/:id/instruments', element: withSuspense(<StationInstruments />) },
       { path: 'calibrations', element: withSuspense(<CalibrationBoard />) },
       { path: 'replacements', element: withSuspense(<ReplaceBoard />) },
+      { path: 'merge', element: withSuspense(<MergeBoard />) },
       { path: 'geometry', element: withSuspense(<GeometryView />) },
       { path: '*', element: <Navigate to={ROUTES.arrays} replace /> },
     ],

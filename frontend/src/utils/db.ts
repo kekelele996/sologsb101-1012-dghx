@@ -12,9 +12,15 @@ import type { Instrument } from '@/types/instrument';
 import { judgeCalibration } from '@/types/calibration';
 import type { Calibration } from '@/types/calibration';
 import type { Replace } from '@/types/replace';
+import type {
+  MergeBackup,
+  MergeBatch,
+  MergeReviewItem,
+  MergeSuspended,
+} from '@/types/merge';
 
 /** 当前数据结构版本号：每次调整字段结构必须 +1 并补迁移 */
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 /** 数据库名（浏览器 IndexedDB 中的库名） */
 export const DB_NAME = 'gbseisarray';
@@ -44,6 +50,14 @@ export class SeisArrayDatabase extends Dexie {
   instruments!: Table<Instrument, string>;
   calibrations!: Table<Calibration, string>;
   replaces!: Table<Replace, string>;
+  /** 现场合并：待逐条认条目 */
+  mergeItems!: Table<MergeReviewItem, string>;
+  /** 现场合并：撞号挂起仪器 */
+  mergeSuspended!: Table<MergeSuspended, string>;
+  /** 现场合并：并入批次 */
+  mergeBatches!: Table<MergeBatch, string>;
+  /** 现场合并：并入前留存的中心台账上一版快照 */
+  mergeBackups!: Table<MergeBackup, string>;
 
   constructor() {
     super(DB_NAME);
@@ -58,7 +72,7 @@ export class SeisArrayDatabase extends Dexie {
     });
 
     // v2：补齐筛选与统计需要的索引（孔径/布设日期、经纬度/基岩、类型/序列号、灵敏度/结论、原因）
-    this.version(DB_VERSION)
+    this.version(2)
       .stores({
         arrays: 'id, name, state, apertureKm, deployDate, department, updatedAt',
         stations: 'id, arrayId, code, lat, lng, elevM, bedrock, updatedAt',
@@ -87,6 +101,19 @@ export class SeisArrayDatabase extends Dexie {
             });
         }
       });
+
+    // v3：新增现场离线台账合并对账四表（业务五表结构不变，Dexie 升级须列出全部表的当前索引）
+    this.version(DB_VERSION).stores({
+      arrays: 'id, name, state, apertureKm, deployDate, department, updatedAt',
+      stations: 'id, arrayId, code, lat, lng, elevM, bedrock, updatedAt',
+      instruments: 'id, stationId, type, model, serialNo, installDate, state, updatedAt',
+      calibrations: 'id, instrumentId, date, sensitivity, selfNoise, responseVerdict, updatedAt',
+      replaces: 'id, instrumentId, state, date, newSerialNo, updatedAt',
+      mergeItems: 'id, batchId, instrumentId, status, updatedAt',
+      mergeSuspended: 'id, batchId, instrumentId, serialNo, status, reason, createdAt',
+      mergeBatches: 'id, status, mergedAt',
+      mergeBackups: 'id, batchId, createdAt',
+    });
   }
 }
 
@@ -555,7 +582,17 @@ export async function initDatabase(): Promise<void> {
 export async function clearAllTables(): Promise<void> {
   await db.transaction(
     'rw',
-    [db.arrays, db.stations, db.instruments, db.calibrations, db.replaces],
+    [
+      db.arrays,
+      db.stations,
+      db.instruments,
+      db.calibrations,
+      db.replaces,
+      db.mergeItems,
+      db.mergeSuspended,
+      db.mergeBatches,
+      db.mergeBackups,
+    ],
     async () => {
       await Promise.all([
         db.arrays.clear(),
@@ -563,9 +600,25 @@ export async function clearAllTables(): Promise<void> {
         db.instruments.clear(),
         db.calibrations.clear(),
         db.replaces.clear(),
+        db.mergeItems.clear(),
+        db.mergeSuspended.clear(),
+        db.mergeBatches.clear(),
+        db.mergeBackups.clear(),
       ]);
     }
   );
+}
+
+/** 读取当前中心五表快照（并入前留存「上一版」用） */
+export async function readCenterSnapshot(): Promise<import('@/types/merge').MergeSnapshot> {
+  const [arrays, stations, instruments, calibrations, replaces] = await Promise.all([
+    db.arrays.toArray(),
+    db.stations.toArray(),
+    db.instruments.toArray(),
+    db.calibrations.toArray(),
+    db.replaces.toArray(),
+  ]);
+  return { arrays, stations, instruments, calibrations, replaces };
 }
 
 /** 清空并重新播种演示数据 */

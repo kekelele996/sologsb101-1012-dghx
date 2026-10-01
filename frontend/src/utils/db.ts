@@ -12,9 +12,11 @@ import type { Instrument } from '@/types/instrument';
 import { judgeCalibration } from '@/types/calibration';
 import type { Calibration } from '@/types/calibration';
 import type { Replace } from '@/types/replace';
+import type { FieldInstrument } from '@/types/fieldInstrument';
+import type { MergeRecord } from '@/types/mergeRecord';
 
 /** 当前数据结构版本号：每次调整字段结构必须 +1 并补迁移 */
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 /** 数据库名（浏览器 IndexedDB 中的库名） */
 export const DB_NAME = 'gbseisarray';
@@ -36,6 +38,8 @@ export interface BackupPayload {
   instruments: Instrument[];
   calibrations: Calibration[];
   replaces: Replace[];
+  fieldInstruments?: FieldInstrument[];
+  mergeRecords?: MergeRecord[];
 }
 
 export class SeisArrayDatabase extends Dexie {
@@ -44,6 +48,8 @@ export class SeisArrayDatabase extends Dexie {
   instruments!: Table<Instrument, string>;
   calibrations!: Table<Calibration, string>;
   replaces!: Table<Replace, string>;
+  fieldInstruments!: Table<FieldInstrument, string>;
+  mergeRecords!: Table<MergeRecord, string>;
 
   constructor() {
     super(DB_NAME);
@@ -58,7 +64,7 @@ export class SeisArrayDatabase extends Dexie {
     });
 
     // v2：补齐筛选与统计需要的索引（孔径/布设日期、经纬度/基岩、类型/序列号、灵敏度/结论、原因）
-    this.version(DB_VERSION)
+    this.version(2)
       .stores({
         arrays: 'id, name, state, apertureKm, deployDate, department, updatedAt',
         stations: 'id, arrayId, code, lat, lng, elevM, bedrock, updatedAt',
@@ -87,6 +93,17 @@ export class SeisArrayDatabase extends Dexie {
             });
         }
       });
+
+    // v3：新增现场登记表与对账留痕表（现场离线登记 → 并入中心台账对账）
+    this.version(3).stores({
+      arrays: 'id, name, state, apertureKm, deployDate, department, updatedAt',
+      stations: 'id, arrayId, code, lat, lng, elevM, bedrock, updatedAt',
+      instruments: 'id, stationId, type, model, serialNo, installDate, state, updatedAt',
+      calibrations: 'id, instrumentId, date, sensitivity, selfNoise, responseVerdict, updatedAt',
+      replaces: 'id, instrumentId, state, date, newSerialNo, updatedAt',
+      fieldInstruments: 'id, tempId, ledgerId, serialNo, mergeStatus, stationCode, updatedAt',
+      mergeRecords: 'id, fieldTempId, fieldId, instrumentId, serialNo, kind, reviewed, updatedAt',
+    });
   }
 }
 
@@ -548,14 +565,123 @@ export async function initDatabase(): Promise<void> {
   if (count === 0) {
     await seedDemoData();
   }
+  if ((await db.fieldInstruments.count()) === 0) {
+    await seedFieldCopyData();
+  }
   stampDbVersion();
+}
+
+/**
+ * 播种现场登记表（野外布设班离线录入），覆盖对账的四种典型情形：
+ * - 两边都改过（ledgerId 指向在册仪器）：现场改型号 / 安装日期 / 序列号；
+ * - 现场新登记且序列号不撞号 → 并入中心台账；
+ * - 现场新登记但序列号与在册仪器撞号 → 挂起不进台账。
+ */
+export async function seedFieldCopyData(): Promise<void> {
+  const now = Date.now();
+  const rows: FieldInstrument[] = [
+    {
+      id: 'fld_ltx02_bb',
+      tempId: 'T-FIELD-0001',
+      ledgerId: 'ins_ltx02_bb',
+      stationCode: 'LTX02',
+      type: '宽频带',
+      model: 'Trillium-120P',
+      serialNo: 'T120-20220315-07',
+      installDate: '2022-03-15',
+      mergeStatus: 'pending',
+      remark: '现场核对后改记型号为 Trillium-120P',
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'fld_ltx03_new',
+      tempId: 'T-FIELD-0002',
+      ledgerId: null,
+      stationCode: 'LTX03',
+      type: '宽频带',
+      model: 'Trillium-Compact',
+      serialNo: 'TC-20240501-09',
+      installDate: '2024-05-01',
+      mergeStatus: 'pending',
+      remark: '新布设仪器，现场登记',
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'fld_hx01_collide',
+      tempId: 'T-FIELD-0003',
+      ledgerId: null,
+      stationCode: 'HX01',
+      type: '强震',
+      model: 'ES-T',
+      serialNo: 'EST-20190925-04',
+      installDate: '2024-06-01',
+      mergeStatus: 'pending',
+      remark: '新到仪器，序列号待核',
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'fld_hx01_sm',
+      tempId: 'T-FIELD-0004',
+      ledgerId: 'ins_hx01_sm',
+      stationCode: 'HX01',
+      type: '强震',
+      model: 'ES-T',
+      serialNo: 'EST-20190925-04',
+      installDate: '2019-09-26',
+      mergeStatus: 'pending',
+      remark: '现场改记安装日期为 2019-09-26',
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'fld_hx02_new',
+      tempId: 'T-FIELD-0005',
+      ledgerId: null,
+      stationCode: 'HX02',
+      type: '短周期',
+      model: 'L-4C-3D',
+      serialNo: 'L4C-20240715-31',
+      installDate: '2024-07-15',
+      mergeStatus: 'pending',
+      remark: '新布设短周期仪器',
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'fld_ltx01_st',
+      tempId: 'T-FIELD-0006',
+      ledgerId: 'ins_ltx01_st',
+      stationCode: 'LTX01',
+      type: '短周期',
+      model: 'FSS-3B',
+      serialNo: 'CMG-3E-20210418-01',
+      installDate: '2021-04-18',
+      mergeStatus: 'pending',
+      remark: '现场改报序列号（与在册宽频带撞号，触发重试）',
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+
+  await db.fieldInstruments.bulkPut(rows);
 }
 
 /** 清空全部业务表（导入覆盖与重置共用） */
 export async function clearAllTables(): Promise<void> {
   await db.transaction(
     'rw',
-    [db.arrays, db.stations, db.instruments, db.calibrations, db.replaces],
+    [
+      db.arrays,
+      db.stations,
+      db.instruments,
+      db.calibrations,
+      db.replaces,
+      db.fieldInstruments,
+      db.mergeRecords,
+    ],
     async () => {
       await Promise.all([
         db.arrays.clear(),
@@ -563,6 +689,8 @@ export async function clearAllTables(): Promise<void> {
         db.instruments.clear(),
         db.calibrations.clear(),
         db.replaces.clear(),
+        db.fieldInstruments.clear(),
+        db.mergeRecords.clear(),
       ]);
     }
   );
@@ -576,14 +704,17 @@ export async function resetDatabase(): Promise<void> {
 
 /** 统计各表行数，供页脚概览与几何页展示 */
 export async function countAll(): Promise<Record<string, number>> {
-  const [arrays, stations, instruments, calibrations, replaces] = await Promise.all([
-    db.arrays.count(),
-    db.stations.count(),
-    db.instruments.count(),
-    db.calibrations.count(),
-    db.replaces.count(),
-  ]);
-  return { arrays, stations, instruments, calibrations, replaces };
+  const [arrays, stations, instruments, calibrations, replaces, fieldInstruments, mergeRecords] =
+    await Promise.all([
+      db.arrays.count(),
+      db.stations.count(),
+      db.instruments.count(),
+      db.calibrations.count(),
+      db.replaces.count(),
+      db.fieldInstruments.count(),
+      db.mergeRecords.count(),
+    ]);
+  return { arrays, stations, instruments, calibrations, replaces, fieldInstruments, mergeRecords };
 }
 
 /** 写入结构版本号到 localStorage，便于几何页比对 */

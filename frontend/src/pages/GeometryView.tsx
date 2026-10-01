@@ -52,7 +52,15 @@ import {
 } from '@/utils/export';
 import { bearingDeg, round, stationDistances, toLocalPlane, planeViewBox } from '@/utils/geo';
 
-const EMPTY_COUNTS: CountMap = { arrays: 0, stations: 0, instruments: 0, calibrations: 0, replaces: 0 };
+const EMPTY_COUNTS: CountMap = {
+  arrays: 0,
+  stations: 0,
+  instruments: 0,
+  calibrations: 0,
+  replaces: 0,
+  fieldInstruments: 0,
+  mergeRecords: 0,
+};
 
 export default function GeometryView() {
   const { message } = AntdApp.useApp();

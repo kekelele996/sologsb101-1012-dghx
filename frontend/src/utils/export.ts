@@ -12,23 +12,36 @@ import {
   type BackupPayload,
 } from '@/utils/db';
 import type { ResponseVerdict } from '@/types/calibration';
+import type { FieldInstrument } from '@/types/fieldInstrument';
+import type { MergeRecord } from '@/types/mergeRecord';
 import { apertureKm, centroid, haversineKm, round, stationDistances } from '@/utils/geo';
 
 /** 备份集合键名 */
-export const BACKUP_KEYS = ['arrays', 'stations', 'instruments', 'calibrations', 'replaces'] as const;
+export const BACKUP_KEYS = [
+  'arrays',
+  'stations',
+  'instruments',
+  'calibrations',
+  'replaces',
+  'fieldInstruments',
+  'mergeRecords',
+] as const;
 export type BackupKey = (typeof BACKUP_KEYS)[number];
 
 export type CountMap = Record<BackupKey, number>;
 
 /** 组装当前本地数据的完整快照 */
 export async function buildBackupPayload(): Promise<BackupPayload> {
-  const [arrays, stations, instruments, calibrations, replaces] = await Promise.all([
-    db.arrays.toArray(),
-    db.stations.toArray(),
-    db.instruments.toArray(),
-    db.calibrations.toArray(),
-    db.replaces.toArray(),
-  ]);
+  const [arrays, stations, instruments, calibrations, replaces, fieldInstruments, mergeRecords] =
+    await Promise.all([
+      db.arrays.toArray(),
+      db.stations.toArray(),
+      db.instruments.toArray(),
+      db.calibrations.toArray(),
+      db.replaces.toArray(),
+      db.fieldInstruments.toArray(),
+      db.mergeRecords.toArray(),
+    ]);
   return {
     app: 'gbseisarray',
     dbVersion: DB_VERSION,
@@ -38,6 +51,8 @@ export async function buildBackupPayload(): Promise<BackupPayload> {
     instruments,
     calibrations,
     replaces,
+    fieldInstruments,
+    mergeRecords,
   };
 }
 
@@ -55,7 +70,9 @@ export function validateBackup(input: unknown): {
   if (obj.app !== undefined && obj.app !== 'gbseisarray') {
     errors.push('app 字段应为 gbseisarray，文件来源不明');
   }
-  for (const key of BACKUP_KEYS) {
+  // 五张主表必备；现场登记与对账留痕为可选（兼容旧备份）
+  const requiredKeys = ['arrays', 'stations', 'instruments', 'calibrations', 'replaces'] as const;
+  for (const key of requiredKeys) {
     if (!Array.isArray(obj[key])) errors.push(`${key} 字段缺失或不是数组`);
   }
   if (errors.length > 0) return { ok: false, errors, payload: null };
@@ -68,6 +85,8 @@ export function validateBackup(input: unknown): {
     instruments: obj.instruments ?? [],
     calibrations: obj.calibrations ?? [],
     replaces: obj.replaces ?? [],
+    fieldInstruments: Array.isArray(obj.fieldInstruments) ? obj.fieldInstruments : [],
+    mergeRecords: Array.isArray(obj.mergeRecords) ? obj.mergeRecords : [],
   };
   return { ok: true, errors, payload };
 }
@@ -80,6 +99,8 @@ export function countPayload(payload: BackupPayload): CountMap {
     instruments: payload.instruments.length,
     calibrations: payload.calibrations.length,
     replaces: payload.replaces.length,
+    fieldInstruments: payload.fieldInstruments?.length ?? 0,
+    mergeRecords: payload.mergeRecords?.length ?? 0,
   };
 }
 
@@ -117,13 +138,23 @@ export async function importBackup(payload: BackupPayload, overwrite: boolean): 
   if (overwrite) await clearAllTables();
   await db.transaction(
     'rw',
-    [db.arrays, db.stations, db.instruments, db.calibrations, db.replaces],
+    [
+      db.arrays,
+      db.stations,
+      db.instruments,
+      db.calibrations,
+      db.replaces,
+      db.fieldInstruments,
+      db.mergeRecords,
+    ],
     async () => {
       await db.arrays.bulkPut(payload.arrays);
       await db.stations.bulkPut(payload.stations);
       await db.instruments.bulkPut(payload.instruments);
       await db.calibrations.bulkPut(payload.calibrations);
       await db.replaces.bulkPut(payload.replaces);
+      await db.fieldInstruments.bulkPut(payload.fieldInstruments ?? []);
+      await db.mergeRecords.bulkPut(payload.mergeRecords ?? []);
     }
   );
   return countPayload(payload);
@@ -134,6 +165,7 @@ export function remapIds(payload: BackupPayload): BackupPayload {
   const arrayMap = new Map<string, string>();
   const stationMap = new Map<string, string>();
   const instrumentMap = new Map<string, string>();
+  const fieldMap = new Map<string, string>();
 
   const arrays = payload.arrays.map((row) => {
     const id = createId('arr');
@@ -160,7 +192,31 @@ export function remapIds(payload: BackupPayload): BackupPayload {
     id: createId('rpl'),
     instrumentId: instrumentMap.get(row.instrumentId) ?? row.instrumentId,
   }));
-  return { ...payload, arrays, stations, instruments, calibrations, replaces };
+  const fieldInstruments: FieldInstrument[] = (payload.fieldInstruments ?? []).map((row) => {
+    const id = createId('fld');
+    fieldMap.set(row.id, id);
+    return {
+      ...row,
+      id,
+      ledgerId: row.ledgerId ? instrumentMap.get(row.ledgerId) ?? row.ledgerId : null,
+    };
+  });
+  const mergeRecords: MergeRecord[] = (payload.mergeRecords ?? []).map((row) => ({
+    ...row,
+    id: createId('mrg'),
+    fieldId: fieldMap.get(row.fieldId) ?? row.fieldId,
+    instrumentId: row.instrumentId ? instrumentMap.get(row.instrumentId) ?? row.instrumentId : null,
+  }));
+  return {
+    ...payload,
+    arrays,
+    stations,
+    instruments,
+    calibrations,
+    replaces,
+    fieldInstruments,
+    mergeRecords,
+  };
 }
 
 /** 按台阵汇总的几何与标定结论 */

@@ -10,6 +10,7 @@ import {
   DashboardOutlined,
   ExperimentOutlined,
   GlobalOutlined,
+  MergeCellsOutlined,
   SwapOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
@@ -30,6 +31,7 @@ import {
   selectReplaces,
   startCalibrationSubscription,
 } from '@/stores/calibrationSlice';
+import { startReconcileSubscription } from '@/stores/reconcileSlice';
 import { DB_NAME, DB_VERSION, initDatabase } from '@/utils/db';
 
 const { Header, Sider, Content, Footer } = Layout;
@@ -39,6 +41,7 @@ function buildSelectedKey(pathname: string, currentArrayId: string | null): stri
   if (pathname.startsWith('/calibrations')) return ROUTES.calibrations;
   if (pathname.startsWith('/replacements')) return ROUTES.replacements;
   if (pathname.startsWith('/geometry')) return ROUTES.geometry;
+  if (pathname.startsWith('/reconcile')) return ROUTES.reconcile;
   if (pathname.startsWith('/stations/') && currentArrayId) return ROUTES.stations(currentArrayId);
   return ROUTES.arrays;
 }
@@ -67,6 +70,7 @@ export default function App() {
         startArraySubscription(dispatch);
         startInstrumentSubscription(dispatch);
         startCalibrationSubscription(dispatch);
+        startReconcileSubscription(dispatch);
       } catch (error) {
         if (cancelled) return;
         messageApi.error(
@@ -119,6 +123,7 @@ export default function App() {
               { key: ROUTES.calibrations, icon: <DashboardOutlined />, label: '标定记录台' },
               { key: ROUTES.replacements, icon: <SwapOutlined />, label: '合格评定与更换' },
               { key: ROUTES.geometry, icon: <GlobalOutlined />, label: '台阵几何与备份' },
+              { key: ROUTES.reconcile, icon: <MergeCellsOutlined />, label: '现场对账合并' },
             ]}
           />
           <div style={{ padding: '12px 16px', color: 'rgba(232,241,251,0.62)', fontSize: 12 }}>
